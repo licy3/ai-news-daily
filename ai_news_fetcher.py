@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AI科技资讯抓取与推送脚本
-每日抓取过去24小时的AI相关新闻，通过Server酱推送到微信
+AI科技资讯抓取与推送脚本（带中文翻译版）
+每日抓取过去24小时的AI相关新闻，翻译后通过Server酱推送到微信
 """
 
 import os
@@ -11,6 +11,51 @@ import feedparser
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 import time
+import re
+
+# 使用 deep-translator，免费且无需API Key
+from deep_translator import GoogleTranslator
+
+
+class Translator:
+    """翻译器类 - 使用 deep-translator"""
+    
+    def __init__(self):
+        self.translator = GoogleTranslator(source='auto', target='zh-CN')
+        self.cache = {}  # 简单缓存，避免重复翻译
+    
+    def is_chinese(self, text: str) -> bool:
+        """检测文本是否主要是中文"""
+        if not text:
+            return True
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+        return chinese_chars / len(text) > 0.3
+    
+    def translate(self, text: str) -> str:
+        """翻译文本到中文"""
+        if not text or self.is_chinese(text):
+            return ""  # 已经是中文，不需要翻译
+        
+        # 检查缓存
+        cache_key = text[:100]  # 用前100字符作为缓存key
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        try:
+            # 限制翻译文本长度，避免超时
+            text_to_translate = text[:500] if len(text) > 500 else text
+            translated = self.translator.translate(text_to_translate)
+            
+            # 缓存结果
+            self.cache[cache_key] = translated
+            
+            # 添加延迟，避免请求过快
+            time.sleep(0.5)
+            
+            return translated
+        except Exception as e:
+            print(f"  翻译失败: {str(e)}")
+            return ""
 
 
 class AINewsFetcher:
@@ -26,7 +71,7 @@ class AINewsFetcher:
         {
             "name": "VentureBeat AI",
             "url": "https://venturebeat.com/category/ai/feed/",
-            "keywords": None  # 该源本身就是AI分类
+            "keywords": None
         },
         {
             "name": "The Verge - AI",
@@ -49,11 +94,6 @@ class AINewsFetcher:
             "keywords": None
         },
         {
-            "name": "Reddit - Artificial Intelligence",
-            "url": "https://www.reddit.com/r/artificial/.rss",
-            "keywords": None
-        },
-        {
             "name": "AI News",
             "url": "https://www.artificialintelligence-news.com/feed/",
             "keywords": None
@@ -62,8 +102,8 @@ class AINewsFetcher:
     
     def __init__(self):
         self.news_items: List[Dict] = []
-        # 24小时前的时间戳
         self.time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+        self.translator = Translator()
     
     def fetch_from_rss(self, source: Dict) -> List[Dict]:
         """从单个RSS源抓取新闻"""
@@ -87,9 +127,9 @@ class AINewsFetcher:
                 # 获取标题和链接
                 title = entry.get('title', 'No Title')
                 link = entry.get('link', '')
-                summary = entry.get('summary', '')[:200] if entry.get('summary') else ''
+                summary = entry.get('summary', '')[:300] if entry.get('summary') else ''
                 
-                # 如果有关键词过滤，检查标题或摘要是否包含关键词
+                # 如果有关键词过滤
                 if source['keywords']:
                     text_to_check = (title + ' ' + summary).lower()
                     if not any(kw.lower() in text_to_check for kw in source['keywords']):
@@ -110,6 +150,24 @@ class AINewsFetcher:
         
         return items
     
+    def translate_news(self):
+        """为所有新闻添加中文翻译"""
+        print("\n🌐 正在翻译新闻标题...")
+        
+        for i, item in enumerate(self.news_items):
+            print(f"  翻译进度: {i+1}/{len(self.news_items)}")
+            
+            # 翻译标题
+            item['title_cn'] = self.translator.translate(item['title'])
+            
+            # 翻译摘要（如果有的话）
+            if item.get('summary'):
+                item['summary_cn'] = self.translator.translate(item['summary'])
+            else:
+                item['summary_cn'] = ""
+        
+        print("✓ 翻译完成")
+    
     def fetch_all(self) -> List[Dict]:
         """从所有RSS源抓取新闻"""
         all_items = []
@@ -117,48 +175,63 @@ class AINewsFetcher:
         for source in self.RSS_SOURCES:
             items = self.fetch_from_rss(source)
             all_items.extend(items)
-            time.sleep(1)  # 避免请求过快
+            time.sleep(1)
         
-        # 去重（基于标题相似度）
+        # 去重
         seen_titles = set()
         unique_items = []
         for item in all_items:
-            # 简单去重：检查标题的前30个字符
             title_key = item['title'][:30].lower()
             if title_key not in seen_titles:
                 seen_titles.add(title_key)
                 unique_items.append(item)
         
-        # 按时间排序（最新的在前）
+        # 按时间排序
         unique_items.sort(key=lambda x: x['pub_time'], reverse=True)
         
-        self.news_items = unique_items[:30]  # 最多保留30条
+        self.news_items = unique_items[:20]  # 限制20条以控制翻译时间
+        
+        # 翻译新闻
+        self.translate_news()
+        
         return self.news_items
     
     def format_for_wechat(self) -> tuple:
-        """格式化新闻内容用于微信推送"""
+        """格式化新闻内容用于微信推送（中英双语版）"""
         if not self.news_items:
             return "今日AI资讯", "暂无最新AI科技资讯"
         
         title = f"📰 AI科技日报 ({datetime.now().strftime('%Y-%m-%d')})"
         
-        # 构建Markdown格式的内容
         content_lines = [
-            f"## 过去24小时AI科技要闻\n",
-            f"共收集到 **{len(self.news_items)}** 条相关资讯\n",
+            f"## 🤖 过去24小时AI科技要闻\n",
+            f"共收集到 **{len(self.news_items)}** 条相关资讯（中英双语）\n",
             "---\n"
         ]
         
         for i, item in enumerate(self.news_items, 1):
+            # 英文原标题
+            content_lines.append(f"### {i}. {item['title']}\n")
+            
+            # 中文翻译标题（如果有）
+            if item.get('title_cn'):
+                content_lines.append(f"**📝 中文：** {item['title_cn']}\n\n")
+            
+            # 摘要（如果有）
+            if item.get('summary_cn'):
+                # 清理HTML标签
+                summary_clean = re.sub(r'<[^>]+>', '', item['summary_cn'])[:150]
+                content_lines.append(f"> 💡 {summary_clean}...\n\n")
+            
             content_lines.append(
-                f"### {i}. {item['title']}\n"
                 f"- 🔗 来源: {item['source']}\n"
                 f"- 🕐 时间: {item['pub_time']}\n"
                 f"- 📎 [阅读原文]({item['link']})\n\n"
             )
         
         content_lines.append("\n---\n")
-        content_lines.append(f"*由 GitHub Actions 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        content_lines.append(f"*由 GitHub Actions 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
+        content_lines.append("*翻译由 Google Translate 提供*")
         
         content = ''.join(content_lines)
         return title, content
@@ -168,36 +241,18 @@ class ServerChanPusher:
     """Server酱推送器"""
     
     def __init__(self, sendkey: str):
-        """
-        初始化Server酱推送器
-        
-        Args:
-            sendkey: Server酱的SendKey，从 https://sctapi.ftqq.com 获取
-        """
         self.sendkey = sendkey
-        # Server酱 Turbo 版 API 地址
         self.api_url = f"https://sctapi.ftqq.com/{sendkey}.send"
     
     def push(self, title: str, content: str) -> bool:
-        """
-        推送消息到微信
-        
-        Args:
-            title: 消息标题，最长256字符
-            content: 消息内容，支持Markdown格式，最长64KB
-            
-        Returns:
-            bool: 推送是否成功
-        """
+        """推送消息到微信"""
         try:
-            # 截断标题（Server酱限制256字符）
             if len(title) > 256:
                 title = title[:253] + "..."
             
-            # Server酱支持 POST 请求
             data = {
                 "title": title,
-                "desp": content,  # desp 支持 Markdown
+                "desp": content,
             }
             
             response = requests.post(self.api_url, data=data, timeout=30)
@@ -218,16 +273,14 @@ class ServerChanPusher:
 def main():
     """主函数"""
     print("=" * 50)
-    print("AI科技资讯抓取与推送")
+    print("AI科技资讯抓取与推送（中英双语版）")
     print(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
     
-    # 从环境变量获取 Server酱 SendKey
     sendkey = os.environ.get('SERVERCHAN_SENDKEY')
     
     if not sendkey:
         print("错误: 未设置 SERVERCHAN_SENDKEY 环境变量")
-        print("请在 GitHub Secrets 中添加 SERVERCHAN_SENDKEY")
         exit(1)
     
     # 1. 抓取新闻
@@ -235,7 +288,7 @@ def main():
     fetcher = AINewsFetcher()
     news = fetcher.fetch_all()
     
-    print(f"\n✓ 共抓取到 {len(news)} 条AI相关新闻\n")
+    print(f"\n✓ 共处理 {len(news)} 条AI相关新闻\n")
     
     # 2. 格式化内容
     title, content = fetcher.format_for_wechat()
