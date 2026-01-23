@@ -1,28 +1,67 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AI科技资讯抓取与推送脚本（带中文翻译版）
+AI科技资讯抓取与推送脚本（腾讯翻译版）
 每日抓取过去24小时的AI相关新闻，翻译后通过Server酱推送到微信
 """
 
 import os
+import re
+import json
+import time
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
-import time
-import re
 
-# 使用 deep-translator，免费且无需API Key
-from deep_translator import GoogleTranslator
+# 腾讯云SDK
+from tencentcloud.common import credential
+from tencentcloud.common.profile.client_profile import ClientProfile
+from tencentcloud.common.profile.http_profile import HttpProfile
+from tencentcloud.common.exception.tencent_cloud_sdk_exception import TencentCloudSDKException
+from tencentcloud.tmt.v20180321 import tmt_client, models
 
 
-class Translator:
-    """翻译器类 - 使用 deep-translator"""
+class TencentTranslator:
+    """腾讯云机器翻译"""
     
-    def __init__(self):
-        self.translator = GoogleTranslator(source='auto', target='zh-CN')
-        self.cache = {}  # 简单缓存，避免重复翻译
+    def __init__(self, secret_id: str, secret_key: str, region: str = "ap-beijing"):
+        """
+        初始化腾讯翻译客户端
+        
+        Args:
+            secret_id: 腾讯云 SecretId
+            secret_key: 腾讯云 SecretKey
+            region: 地域，可选 ap-beijing, ap-shanghai, ap-guangzhou 等
+        """
+        self.secret_id = secret_id
+        self.secret_key = secret_key
+        self.region = region
+        self.cache = {}  # 翻译缓存
+        self._init_client()
+    
+    def _init_client(self):
+        """初始化腾讯云TMT客户端"""
+        try:
+            # 创建认证对象
+            cred = credential.Credential(self.secret_id, self.secret_key)
+            
+            # 配置HTTP选项
+            http_profile = HttpProfile()
+            http_profile.endpoint = "tmt.tencentcloudapi.com"
+            http_profile.reqTimeout = 30
+            
+            # 配置客户端选项
+            client_profile = ClientProfile()
+            client_profile.httpProfile = http_profile
+            
+            # 创建TMT客户端
+            self.client = tmt_client.TmtClient(cred, self.region, client_profile)
+            print("✓ 腾讯翻译客户端初始化成功")
+            
+        except Exception as e:
+            print(f"✗ 腾讯翻译客户端初始化失败: {str(e)}")
+            self.client = None
     
     def is_chinese(self, text: str) -> bool:
         """检测文本是否主要是中文"""
@@ -31,28 +70,62 @@ class Translator:
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
         return chinese_chars / len(text) > 0.3
     
-    def translate(self, text: str) -> str:
-        """翻译文本到中文"""
-        if not text or self.is_chinese(text):
-            return ""  # 已经是中文，不需要翻译
+    def translate(self, text: str, source: str = "auto", target: str = "zh") -> str:
+        """
+        翻译文本
+        
+        Args:
+            text: 要翻译的文本
+            source: 源语言，auto表示自动检测
+            target: 目标语言，zh表示中文
+            
+        Returns:
+            翻译后的文本，失败返回空字符串
+        """
+        if not text or not self.client:
+            return ""
+        
+        # 如果已经是中文，不需要翻译
+        if self.is_chinese(text):
+            return ""
         
         # 检查缓存
-        cache_key = text[:100]  # 用前100字符作为缓存key
+        cache_key = text[:100]
         if cache_key in self.cache:
             return self.cache[cache_key]
         
         try:
-            # 限制翻译文本长度，避免超时
-            text_to_translate = text[:500] if len(text) > 500 else text
-            translated = self.translator.translate(text_to_translate)
+            # 创建请求对象
+            req = models.TextTranslateRequest()
+            
+            # 限制文本长度（腾讯API单次限制2000字符）
+            text_to_translate = text[:2000] if len(text) > 2000 else text
+            
+            # 设置请求参数
+            req.SourceText = text_to_translate
+            req.Source = source
+            req.Target = target
+            req.ProjectId = 0  # 项目ID，默认为0
+            
+            # 发送请求
+            resp = self.client.TextTranslate(req)
+            
+            # 解析响应
+            result = json.loads(resp.to_json_string())
+            translated_text = result.get("TargetText", "")
             
             # 缓存结果
-            self.cache[cache_key] = translated
+            if translated_text:
+                self.cache[cache_key] = translated_text
             
-            # 添加延迟，避免请求过快
-            time.sleep(0.5)
+            # 添加延迟，避免QPS超限（腾讯API限制5次/秒）
+            time.sleep(0.3)
             
-            return translated
+            return translated_text
+            
+        except TencentCloudSDKException as e:
+            print(f"  腾讯翻译API错误: {e.message}")
+            return ""
         except Exception as e:
             print(f"  翻译失败: {str(e)}")
             return ""
@@ -100,10 +173,10 @@ class AINewsFetcher:
         },
     ]
     
-    def __init__(self):
+    def __init__(self, translator: TencentTranslator = None):
         self.news_items: List[Dict] = []
         self.time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
-        self.translator = Translator()
+        self.translator = translator
     
     def fetch_from_rss(self, source: Dict) -> List[Dict]:
         """从单个RSS源抓取新闻"""
@@ -129,6 +202,9 @@ class AINewsFetcher:
                 link = entry.get('link', '')
                 summary = entry.get('summary', '')[:300] if entry.get('summary') else ''
                 
+                # 清理HTML标签
+                summary = re.sub(r'<[^>]+>', '', summary)
+                
                 # 如果有关键词过滤
                 if source['keywords']:
                     text_to_check = (title + ' ' + summary).lower()
@@ -152,15 +228,19 @@ class AINewsFetcher:
     
     def translate_news(self):
         """为所有新闻添加中文翻译"""
-        print("\n🌐 正在翻译新闻标题...")
+        if not self.translator:
+            print("⚠️ 未配置翻译器，跳过翻译")
+            return
+        
+        print("\n🌐 正在使用腾讯翻译API翻译新闻...")
         
         for i, item in enumerate(self.news_items):
-            print(f"  翻译进度: {i+1}/{len(self.news_items)}")
+            print(f"  翻译进度: {i+1}/{len(self.news_items)} - {item['title'][:30]}...")
             
             # 翻译标题
             item['title_cn'] = self.translator.translate(item['title'])
             
-            # 翻译摘要（如果有的话）
+            # 翻译摘要（如果有）
             if item.get('summary'):
                 item['summary_cn'] = self.translator.translate(item['summary'])
             else:
@@ -189,7 +269,8 @@ class AINewsFetcher:
         # 按时间排序
         unique_items.sort(key=lambda x: x['pub_time'], reverse=True)
         
-        self.news_items = unique_items[:20]  # 限制20条以控制翻译时间
+        # 限制数量以控制翻译时间和API调用次数
+        self.news_items = unique_items[:20]
         
         # 翻译新闻
         self.translate_news()
@@ -217,11 +298,12 @@ class AINewsFetcher:
             if item.get('title_cn'):
                 content_lines.append(f"**📝 中文：** {item['title_cn']}\n\n")
             
-            # 摘要（如果有）
+            # 中文摘要（如果有）
             if item.get('summary_cn'):
-                # 清理HTML标签
-                summary_clean = re.sub(r'<[^>]+>', '', item['summary_cn'])[:150]
-                content_lines.append(f"> 💡 {summary_clean}...\n\n")
+                summary_display = item['summary_cn'][:150]
+                if len(item['summary_cn']) > 150:
+                    summary_display += "..."
+                content_lines.append(f"> 💡 {summary_display}\n\n")
             
             content_lines.append(
                 f"- 🔗 来源: {item['source']}\n"
@@ -231,7 +313,7 @@ class AINewsFetcher:
         
         content_lines.append("\n---\n")
         content_lines.append(f"*由 GitHub Actions 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
-        content_lines.append("*翻译由 Google Translate 提供*")
+        content_lines.append("*翻译由腾讯云机器翻译提供*")
         
         content = ''.join(content_lines)
         return title, content
@@ -272,20 +354,33 @@ class ServerChanPusher:
 
 def main():
     """主函数"""
-    print("=" * 50)
-    print("AI科技资讯抓取与推送（中英双语版）")
+    print("=" * 60)
+    print("AI科技资讯抓取与推送（腾讯翻译版）")
     print(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    print("=" * 60)
     
+    # 从环境变量获取配置
     sendkey = os.environ.get('SERVERCHAN_SENDKEY')
+    tencent_secret_id = os.environ.get('TENCENT_SECRET_ID')
+    tencent_secret_key = os.environ.get('TENCENT_SECRET_KEY')
     
+    # 检查必要配置
     if not sendkey:
         print("错误: 未设置 SERVERCHAN_SENDKEY 环境变量")
         exit(1)
     
+    # 初始化翻译器（如果配置了腾讯云密钥）
+    translator = None
+    if tencent_secret_id and tencent_secret_key:
+        print("\n🔑 检测到腾讯云API配置，初始化翻译器...")
+        translator = TencentTranslator(tencent_secret_id, tencent_secret_key)
+    else:
+        print("\n⚠️ 未配置腾讯云API密钥，将跳过翻译功能")
+        print("   请在 GitHub Secrets 中添加 TENCENT_SECRET_ID 和 TENCENT_SECRET_KEY")
+    
     # 1. 抓取新闻
     print("\n📡 开始抓取AI科技资讯...\n")
-    fetcher = AINewsFetcher()
+    fetcher = AINewsFetcher(translator=translator)
     news = fetcher.fetch_all()
     
     print(f"\n✓ 共处理 {len(news)} 条AI相关新闻\n")
