@@ -134,7 +134,7 @@ class TencentTranslator:
 class AINewsFetcher:
     """AI新闻抓取器"""
     
-    # AI科技相关RSS源列表
+    # 国际AI科技相关RSS源列表
     RSS_SOURCES = [
         {
             "name": "MIT Technology Review - AI",
@@ -172,9 +172,64 @@ class AINewsFetcher:
             "keywords": None
         },
     ]
+
+    # 中国国内AI科技相关RSS源列表
+    CHINESE_RSS_SOURCES = [
+        {
+            "name": "机器之心",
+            "url": "https://www.jiqizhixin.com/rss",
+            "keywords": None
+        },
+        {
+            "name": "量子位",
+            "url": "https://www.qbitai.com/feed",
+            "keywords": None
+        },
+        {
+            "name": "新智元",
+            "url": "https://feeds.feedburner.com/xinzhiyuan",
+            "keywords": None
+        },
+        {
+            "name": "36氪",
+            "url": "https://36kr.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "ChatGPT", "大语言模型"]
+        },
+        {
+            "name": "爱范儿",
+            "url": "https://www.ifanr.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "虎嗅",
+            "url": "https://www.huxiu.com/rss/0.xml",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "ChatGPT"]
+        },
+        {
+            "name": "雷锋网",
+            "url": "https://www.leiphone.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "极客公园",
+            "url": "https://www.geekpark.net/rss",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "InfoQ中文",
+            "url": "https://www.infoq.cn/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "LLM"]
+        },
+        {
+            "name": "OSCHINA",
+            "url": "https://www.oschina.net/news/rss",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "LLM", "深度学习"]
+        },
+    ]
     
     def __init__(self, translator: TencentTranslator = None):
         self.news_items: List[Dict] = []
+        self.chinese_news_items: List[Dict] = []
         self.time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
         self.translator = translator
     
