@@ -9,6 +9,9 @@ import os
 import re
 import json
 import time
+import hmac
+import hashlib
+import base64
 import requests
 import feedparser
 from datetime import datetime, timedelta, timezone
@@ -546,15 +549,35 @@ class ServerChanPusher:
 class FeishuPusher:
     """飞书自定义机器人推送器（Webhook方式）"""
 
-    def __init__(self, webhook_url: str):
+    def __init__(self, webhook_url: str, secret: str = None):
         """
         初始化飞书推送器
 
         Args:
             webhook_url: 飞书自定义机器人的 Webhook 地址
                          格式: https://open.feishu.cn/open-apis/bot/v2/hook/<token>
+            secret: 飞书机器人安全设置中的签名校验密钥（可选）。
+                    若在飞书机器人设置中开启了「签名校验」，则必须填写对应的签名密钥，
+                    否则每次推送均会失败。
         """
         self.webhook_url = webhook_url
+        self.secret = secret
+
+    def _generate_sign(self, timestamp: str) -> str:
+        """
+        生成飞书签名
+
+        算法：HMAC-SHA256(timestamp + "\\n" + secret, "") -> base64
+
+        Args:
+            timestamp: Unix 时间戳（秒），字符串形式
+
+        Returns:
+            base64 编码后的签名字符串
+        """
+        sign_str = f"{timestamp}\n{self.secret}"
+        hmac_code = hmac.new(sign_str.encode("utf-8"), digestmod=hashlib.sha256).digest()
+        return base64.b64encode(hmac_code).decode("utf-8")
 
     def push(self, payload: Dict) -> bool:
         """
@@ -567,6 +590,14 @@ class FeishuPusher:
             推送成功返回 True，否则返回 False
         """
         try:
+            # 若配置了签名密钥，将 timestamp 和 sign 注入 payload
+            if self.secret:
+                timestamp = str(int(time.time()))
+                sign = self._generate_sign(timestamp)
+                payload = dict(payload)  # 避免修改原始对象
+                payload["timestamp"] = timestamp
+                payload["sign"] = sign
+
             response = requests.post(
                 self.webhook_url,
                 json=payload,
@@ -601,6 +632,7 @@ def main():
     tencent_secret_id = os.environ.get('TENCENT_SECRET_ID')
     tencent_secret_key = os.environ.get('TENCENT_SECRET_KEY')
     feishu_webhook_url = os.environ.get('FEISHU_WEBHOOK_URL')
+    feishu_secret = os.environ.get('FEISHU_SECRET')
 
     # 检查至少有一个推送渠道可用
     if not sendkey and not feishu_webhook_url:
@@ -650,7 +682,7 @@ def main():
     # 5. 推送到飞书
     if feishu_webhook_url:
         print("📤 正在推送到飞书...")
-        feishu_pusher = FeishuPusher(feishu_webhook_url)
+        feishu_pusher = FeishuPusher(feishu_webhook_url, secret=feishu_secret)
         if feishu_pusher.push(feishu_payload):
             overall_success = True
     else:
