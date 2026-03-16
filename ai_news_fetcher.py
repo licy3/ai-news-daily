@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 AI科技资讯抓取与推送脚本（腾讯翻译版）
-每日抓取过去24小时的AI相关新闻，翻译后通过Server酱推送到微信
+每日抓取过去24小时的AI相关新闻，翻译后通过Server酱推送到微信，同时支持推送到飞书
 """
 
 import os
@@ -134,7 +134,7 @@ class TencentTranslator:
 class AINewsFetcher:
     """AI新闻抓取器"""
     
-    # AI科技相关RSS源列表
+    # 国际AI科技相关RSS源列表
     RSS_SOURCES = [
         {
             "name": "MIT Technology Review - AI",
@@ -172,9 +172,64 @@ class AINewsFetcher:
             "keywords": None
         },
     ]
+
+    # 中国国内AI科技相关RSS源列表
+    CHINESE_RSS_SOURCES = [
+        {
+            "name": "机器之心",
+            "url": "https://www.jiqizhixin.com/rss",
+            "keywords": None
+        },
+        {
+            "name": "量子位",
+            "url": "https://www.qbitai.com/feed",
+            "keywords": None
+        },
+        {
+            "name": "新智元",
+            "url": "https://feeds.feedburner.com/xinzhiyuan",
+            "keywords": None
+        },
+        {
+            "name": "36氪",
+            "url": "https://36kr.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "ChatGPT", "大语言模型"]
+        },
+        {
+            "name": "爱范儿",
+            "url": "https://www.ifanr.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "虎嗅",
+            "url": "https://www.huxiu.com/rss/0.xml",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "ChatGPT"]
+        },
+        {
+            "name": "雷锋网",
+            "url": "https://www.leiphone.com/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "极客公园",
+            "url": "https://www.geekpark.net/rss",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习"]
+        },
+        {
+            "name": "InfoQ中文",
+            "url": "https://www.infoq.cn/feed",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "LLM"]
+        },
+        {
+            "name": "OSCHINA",
+            "url": "https://www.oschina.net/news/rss",
+            "keywords": ["AI", "人工智能", "大模型", "机器学习", "LLM", "深度学习"]
+        },
+    ]
     
     def __init__(self, translator: TencentTranslator = None):
         self.news_items: List[Dict] = []
+        self.chinese_news_items: List[Dict] = []
         self.time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
         self.translator = translator
     
@@ -249,14 +304,14 @@ class AINewsFetcher:
         print("✓ 翻译完成")
     
     def fetch_all(self) -> List[Dict]:
-        """从所有RSS源抓取新闻"""
+        """从所有RSS源抓取新闻（国际 + 国内）"""
+        # ── 国际新闻 ──────────────────────────────────────────
         all_items = []
-        
         for source in self.RSS_SOURCES:
             items = self.fetch_from_rss(source)
             all_items.extend(items)
             time.sleep(1)
-        
+
         # 去重
         seen_titles = set()
         unique_items = []
@@ -265,58 +320,194 @@ class AINewsFetcher:
             if title_key not in seen_titles:
                 seen_titles.add(title_key)
                 unique_items.append(item)
-        
-        # 按时间排序
+
+        # 按时间排序，限制数量以控制翻译时间和API调用次数
         unique_items.sort(key=lambda x: x['pub_time'], reverse=True)
-        
-        # 限制数量以控制翻译时间和API调用次数
         self.news_items = unique_items[:20]
-        
-        # 翻译新闻
+
+        # 翻译国际新闻
         self.translate_news()
-        
+
+        # ── 国内新闻 ──────────────────────────────────────────
+        print("\n📡 开始抓取国内AI科技资讯...\n")
+        self.fetch_chinese_news()
+
         return self.news_items
+
+    def fetch_chinese_news(self):
+        """从国内RSS源抓取AI科技新闻（最多10条）"""
+        all_cn_items = []
+
+        for source in self.CHINESE_RSS_SOURCES:
+            items = self.fetch_from_rss(source)
+            all_cn_items.extend(items)
+            time.sleep(1)
+
+        # 去重
+        seen_titles = set()
+        unique_cn_items = []
+        for item in all_cn_items:
+            title_key = item['title'][:30].lower()
+            if title_key not in seen_titles:
+                seen_titles.add(title_key)
+                unique_cn_items.append(item)
+
+        # 按时间排序，限制为10条
+        unique_cn_items.sort(key=lambda x: x['pub_time'], reverse=True)
+        self.chinese_news_items = unique_cn_items[:10]
+
+        print(f"✓ 共获取国内AI资讯 {len(self.chinese_news_items)} 条")
     
     def format_for_wechat(self) -> tuple:
         """格式化新闻内容用于微信推送（中英双语版）"""
-        if not self.news_items:
+        if not self.news_items and not self.chinese_news_items:
             return "今日AI资讯", "暂无最新AI科技资讯"
-        
+
         title = f"📰 AI科技日报 ({datetime.now().strftime('%Y-%m-%d')})"
-        
+
         content_lines = [
             f"## 🤖 过去24小时AI科技要闻\n",
-            f"共收集到 **{len(self.news_items)}** 条相关资讯（中英双语）\n",
+            f"共收集到 **{len(self.news_items)}** 条国际资讯（中英双语）、**{len(self.chinese_news_items)}** 条国内资讯\n",
             "---\n"
         ]
-        
-        for i, item in enumerate(self.news_items, 1):
-            # 英文原标题
-            content_lines.append(f"### {i}. {item['title']}\n")
-            
-            # 中文翻译标题（如果有）
-            if item.get('title_cn'):
-                content_lines.append(f"**📝 中文：** {item['title_cn']}\n\n")
-            
-            # 中文摘要（如果有）
-            if item.get('summary_cn'):
-                summary_display = item['summary_cn'][:150]
-                if len(item['summary_cn']) > 150:
-                    summary_display += "..."
-                content_lines.append(f"> 💡 {summary_display}\n\n")
-            
-            content_lines.append(
-                f"- 🔗 来源: {item['source']}\n"
-                f"- 🕐 时间: {item['pub_time']}\n"
-                f"- 📎 [阅读原文]({item['link']})\n\n"
-            )
-        
+
+        # ── 国际新闻 ─────────────────────────────────────────
+        if self.news_items:
+            content_lines.append("## 🌍 国际AI科技资讯\n\n")
+            for i, item in enumerate(self.news_items, 1):
+                content_lines.append(f"### {i}. {item['title']}\n")
+
+                if item.get('title_cn'):
+                    content_lines.append(f"**📝 中文：** {item['title_cn']}\n\n")
+
+                if item.get('summary_cn'):
+                    summary_display = item['summary_cn'][:150]
+                    if len(item['summary_cn']) > 150:
+                        summary_display += "..."
+                    content_lines.append(f"> 💡 {summary_display}\n\n")
+
+                content_lines.append(
+                    f"- 🔗 来源: {item['source']}\n"
+                    f"- 🕐 时间: {item['pub_time']}\n"
+                    f"- 📎 [阅读原文]({item['link']})\n\n"
+                )
+
+        # ── 国内新闻 ─────────────────────────────────────────
+        if self.chinese_news_items:
+            content_lines.append("---\n\n")
+            content_lines.append("## 🇨🇳 国内AI科技资讯\n\n")
+            for i, item in enumerate(self.chinese_news_items, 1):
+                content_lines.append(f"### {i}. {item['title']}\n")
+
+                if item.get('summary'):
+                    summary_display = item['summary'][:150]
+                    if len(item['summary']) > 150:
+                        summary_display += "..."
+                    content_lines.append(f"> 💡 {summary_display}\n\n")
+
+                content_lines.append(
+                    f"- 🔗 来源: {item['source']}\n"
+                    f"- 🕐 时间: {item['pub_time']}\n"
+                    f"- 📎 [阅读原文]({item['link']})\n\n"
+                )
+
         content_lines.append("\n---\n")
         content_lines.append(f"*由 GitHub Actions 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
         content_lines.append("*翻译由腾讯云机器翻译提供*")
-        
+
         content = ''.join(content_lines)
         return title, content
+
+    def format_for_feishu(self) -> Dict:
+        """格式化新闻内容为飞书富文本消息（post类型）"""
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        msg_title = f"📰 AI科技日报 ({date_str})"
+
+        paragraphs = []
+
+        def _text(t: str) -> Dict:
+            return {"tag": "text", "text": t}
+
+        def _link(text: str, href: str) -> Dict:
+            return {"tag": "a", "text": text, "href": href}
+
+        def _bold(t: str) -> Dict:
+            return {"tag": "text", "text": t, "style": ["bold"]}
+
+        # 摘要行
+        total_intl = len(self.news_items)
+        total_cn = len(self.chinese_news_items)
+        paragraphs.append([
+            _text(f"🤖 过去24小时：{total_intl} 条国际资讯，{total_cn} 条国内资讯")
+        ])
+        paragraphs.append([_text("─" * 30)])
+
+        # ── 国际新闻 ─────────────────────────────────────────
+        if self.news_items:
+            paragraphs.append([_bold("🌍 国际AI科技资讯")])
+            for i, item in enumerate(self.news_items, 1):
+                # 标题行（带链接）
+                title_text = item.get('title_cn') or item['title']
+                row = [_text(f"{i}. ")]
+                if item.get('link'):
+                    row.append(_link(title_text, item['link']))
+                else:
+                    row.append(_text(title_text))
+                paragraphs.append(row)
+
+                # 英文原标题（若有中文翻译则附注）
+                if item.get('title_cn'):
+                    paragraphs.append([_text(f"   EN: {item['title']}")])
+
+                # 摘要
+                if item.get('summary_cn'):
+                    summary = item['summary_cn'][:120]
+                    if len(item['summary_cn']) > 120:
+                        summary += "..."
+                    paragraphs.append([_text(f"   💡 {summary}")])
+
+                paragraphs.append([
+                    _text(f"   🔗 {item['source']}  🕐 {item['pub_time']}")
+                ])
+
+        # ── 国内新闻 ─────────────────────────────────────────
+        if self.chinese_news_items:
+            paragraphs.append([_text("─" * 30)])
+            paragraphs.append([_bold("🇨🇳 国内AI科技资讯")])
+            for i, item in enumerate(self.chinese_news_items, 1):
+                row = [_text(f"{i}. ")]
+                if item.get('link'):
+                    row.append(_link(item['title'], item['link']))
+                else:
+                    row.append(_text(item['title']))
+                paragraphs.append(row)
+
+                if item.get('summary'):
+                    summary = item['summary'][:120]
+                    if len(item['summary']) > 120:
+                        summary += "..."
+                    paragraphs.append([_text(f"   💡 {summary}")])
+
+                paragraphs.append([
+                    _text(f"   🔗 {item['source']}  🕐 {item['pub_time']}")
+                ])
+
+        paragraphs.append([_text("─" * 30)])
+        paragraphs.append([
+            _text(f"由 GitHub Actions 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        ])
+
+        return {
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": msg_title,
+                        "content": paragraphs
+                    }
+                }
+            }
+        }
 
 
 class ServerChanPusher:
@@ -341,14 +532,60 @@ class ServerChanPusher:
             result = response.json()
             
             if result.get('code') == 0:
-                print(f"✓ 消息推送成功！")
+                print(f"✓ 微信消息推送成功！")
                 return True
             else:
-                print(f"✗ 消息推送失败: {result.get('message', 'Unknown error')}")
+                print(f"✗ 微信消息推送失败: {result.get('message', 'Unknown error')}")
                 return False
                 
         except Exception as e:
-            print(f"✗ 推送异常: {str(e)}")
+            print(f"✗ 微信推送异常: {str(e)}")
+            return False
+
+
+class FeishuPusher:
+    """飞书自定义机器人推送器（Webhook方式）"""
+
+    def __init__(self, webhook_url: str):
+        """
+        初始化飞书推送器
+
+        Args:
+            webhook_url: 飞书自定义机器人的 Webhook 地址
+                         格式: https://open.feishu.cn/open-apis/bot/v2/hook/<token>
+        """
+        self.webhook_url = webhook_url
+
+    def push(self, payload: Dict) -> bool:
+        """
+        向飞书推送消息
+
+        Args:
+            payload: 符合飞书消息格式的字典（msg_type + content）
+
+        Returns:
+            推送成功返回 True，否则返回 False
+        """
+        try:
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            result = response.json()
+
+            # 飞书返回 {"StatusCode": 0} 或 {"code": 0} 表示成功
+            if result.get('StatusCode') == 0 or result.get('code') == 0:
+                print("✓ 飞书消息推送成功！")
+                return True
+            else:
+                msg = result.get('msg') or result.get('message') or str(result)
+                print(f"✗ 飞书消息推送失败: {msg}")
+                return False
+
+        except Exception as e:
+            print(f"✗ 飞书推送异常: {str(e)}")
             return False
 
 
@@ -363,10 +600,11 @@ def main():
     sendkey = os.environ.get('SERVERCHAN_SENDKEY')
     tencent_secret_id = os.environ.get('TENCENT_SECRET_ID')
     tencent_secret_key = os.environ.get('TENCENT_SECRET_KEY')
-    
-    # 检查必要配置
-    if not sendkey:
-        print("错误: 未设置 SERVERCHAN_SENDKEY 环境变量")
+    feishu_webhook_url = os.environ.get('FEISHU_WEBHOOK_URL')
+
+    # 检查至少有一个推送渠道可用
+    if not sendkey and not feishu_webhook_url:
+        print("错误: 未设置任何推送渠道，请至少配置 SERVERCHAN_SENDKEY 或 FEISHU_WEBHOOK_URL")
         exit(1)
     
     # 初始化翻译器（如果配置了腾讯云密钥）
@@ -378,15 +616,16 @@ def main():
         print("\n⚠️ 未配置腾讯云API密钥，将跳过翻译功能")
         print("   请在 GitHub Secrets 中添加 TENCENT_SECRET_ID 和 TENCENT_SECRET_KEY")
     
-    # 1. 抓取新闻
-    print("\n📡 开始抓取AI科技资讯...\n")
+    # 1. 抓取新闻（国际 + 国内）
+    print("\n📡 开始抓取国际AI科技资讯...\n")
     fetcher = AINewsFetcher(translator=translator)
     news = fetcher.fetch_all()
     
-    print(f"\n✓ 共处理 {len(news)} 条AI相关新闻\n")
+    print(f"\n✓ 共处理 {len(news)} 条国际AI相关新闻，{len(fetcher.chinese_news_items)} 条国内AI相关新闻\n")
     
     # 2. 格式化内容
-    title, content = fetcher.format_for_wechat()
+    title, wechat_content = fetcher.format_for_wechat()
+    feishu_payload = fetcher.format_for_feishu()
 
     # 3. 保存新闻到文件（维持仓库活跃，防止GitHub禁用定时任务）
     news_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -395,18 +634,32 @@ def main():
     news_file = os.path.join(news_dir, f'{news_date}.md')
     with open(news_file, 'w', encoding='utf-8') as f:
         f.write(f"# {title}\n\n")
-        f.write(content)
+        f.write(wechat_content)
     print(f"✓ 新闻已保存到 {news_file}")
 
-    # 4. 推送到微信
-    print("📤 正在推送到微信...")
-    pusher = ServerChanPusher(sendkey)
-    success = pusher.push(title, content)
-    
-    if success:
-        print("\n🎉 任务完成！请查看微信消息。")
+    # 4. 推送到微信（Server酱）
+    overall_success = False
+    if sendkey:
+        print("📤 正在推送到微信（Server酱）...")
+        wechat_pusher = ServerChanPusher(sendkey)
+        if wechat_pusher.push(title, wechat_content):
+            overall_success = True
     else:
-        print("\n❌ 推送失败，请检查配置。")
+        print("⚠️ 未配置 SERVERCHAN_SENDKEY，跳过微信推送")
+
+    # 5. 推送到飞书
+    if feishu_webhook_url:
+        print("📤 正在推送到飞书...")
+        feishu_pusher = FeishuPusher(feishu_webhook_url)
+        if feishu_pusher.push(feishu_payload):
+            overall_success = True
+    else:
+        print("⚠️ 未配置 FEISHU_WEBHOOK_URL，跳过飞书推送")
+
+    if overall_success:
+        print("\n🎉 任务完成！")
+    else:
+        print("\n❌ 所有推送渠道均失败，请检查配置。")
         exit(1)
 
 
