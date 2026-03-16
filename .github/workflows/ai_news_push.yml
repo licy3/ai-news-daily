@@ -6,6 +6,9 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:  # 支持手动触发
 
+permissions:
+  contents: write  # 允许工作流向仓库提交文件，保持仓库活跃以防止GitHub禁用定时任务
+
 jobs:
   fetch-and-push:
     runs-on: ubuntu-latest
@@ -30,3 +33,11 @@ jobs:
           TENCENT_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
         run: python ai_news_fetcher.py
+
+      - name: Commit daily news file
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add news/
+          git diff --staged --quiet || git commit -m "📰 Add AI news for $(date -u +%Y-%m-%d)"
+          git push

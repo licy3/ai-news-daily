@@ -387,8 +387,18 @@ def main():
     
     # 2. 格式化内容
     title, content = fetcher.format_for_wechat()
-    
-    # 3. 推送到微信
+
+    # 3. 保存新闻到文件（维持仓库活跃，防止GitHub禁用定时任务）
+    news_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    news_dir = 'news'
+    os.makedirs(news_dir, exist_ok=True)
+    news_file = os.path.join(news_dir, f'{news_date}.md')
+    with open(news_file, 'w', encoding='utf-8') as f:
+        f.write(f"# {title}\n\n")
+        f.write(content)
+    print(f"✓ 新闻已保存到 {news_file}")
+
+    # 4. 推送到微信
     print("📤 正在推送到微信...")
     pusher = ServerChanPusher(sendkey)
     success = pusher.push(title, content)
