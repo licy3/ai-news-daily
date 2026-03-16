@@ -32,6 +32,7 @@
 | Secret 名称 | 是否必填 | 说明 |
 |-------------|----------|------|
 | `FEISHU_WEBHOOK_URL` | 二选一 | 飞书自定义机器人的 Webhook 地址（见下方配置指南） |
+| `FEISHU_SECRET` | 可选 | 飞书机器人「签名校验」的签名密钥（开启签名校验时必填） |
 | `SERVERCHAN_SENDKEY` | 二选一 | Server酱的 SendKey（微信推送，见下方配置指南） |
 | `TENCENT_SECRET_ID` | 可选 | 腾讯云 SecretId（用于英文翻译） |
 | `TENCENT_SECRET_KEY` | 可选 | 腾讯云 SecretKey（用于英文翻译） |
@@ -63,14 +64,23 @@
    https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
    ```
 
-   > ⚠️ **安全提示**：Webhook 地址相当于密码，请勿泄露。建议在飞书机器人设置中开启**签名校验**（本项目当前不使用签名，留空即可正常工作）。
+5. **安全设置（重要）**：飞书机器人支持「签名校验」来防止 Webhook 被滥用。请根据你的选择操作：
+   - **不启用签名校验**：直接点击完成，只需保存 Webhook 地址即可。
+   - **启用签名校验（推荐）**：勾选「签名校验」后，页面会展示一个**签名密钥（Secret）**，请同时复制该密钥备用。
 
-### 3. 将 Webhook 地址保存到 GitHub Secrets
+   > ⚠️ 若已开启签名校验但未在 GitHub Secrets 中配置 `FEISHU_SECRET`，**每次推送都会失败**，这是飞书推送失败最常见的原因。
+
+### 3. 将 Webhook 地址（及签名密钥）保存到 GitHub Secrets
 
 在仓库 **Settings → Secrets and variables → Actions** 中新建：
 
 - **Name**：`FEISHU_WEBHOOK_URL`
 - **Secret**：粘贴上一步复制的完整 Webhook 地址
+
+若你在上一步启用了签名校验，还需再新建一个 Secret：
+
+- **Name**：`FEISHU_SECRET`
+- **Secret**：粘贴签名校验页面展示的签名密钥
 
 ### 4. 验证效果
 
@@ -135,6 +145,10 @@ schedule:
 - 检查 Webhook 地址是否完整、无多余空格
 - 在飞书群设置中确认机器人仍在群内（机器人被移除后 Webhook 失效）
 - 查看 Actions 日志中 `飞书消息推送` 一行的输出
+
+**Q: 飞书日志显示"推送失败"，错误信息含 "Sign verification failed" 或 "invalid signature"？**
+- 原因：你的飞书机器人开启了「签名校验」，但未配置 `FEISHU_SECRET`。
+- 解决：进入飞书群设置 → 机器人 → 编辑机器人 → 安全设置，复制签名密钥，然后在 GitHub Secrets 中新建 `FEISHU_SECRET` 并粘贴该密钥。
 
 **Q: 飞书提示"token不合法"？**
 - 重新进入群设置，删除旧机器人后重新创建，复制新的 Webhook 地址
