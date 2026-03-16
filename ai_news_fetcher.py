@@ -435,7 +435,7 @@ class AINewsFetcher:
             return {"tag": "a", "text": text, "href": href}
 
         def _bold(t: str) -> Dict:
-            return {"tag": "text", "text": t, "style": ["bold"]}
+            return {"tag": "text", "text": t}
 
         # 摘要行
         total_intl = len(self.news_items)
